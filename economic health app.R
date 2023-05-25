@@ -51,9 +51,9 @@ ui <- fluidPage(
     sidebarPanel(
       selectInput("series_long", "Select series:", choices = unique(df$series_long), multiple = TRUE),
       p("Use the date range slider below to select a specific period of time."),
-      p("You can click and drag on the slider to select a range, or click on the handles and move them individually."), 
       p("Hover your cursor over the line plot to see data series analytics."),
-      p("Shaded Areas Represent GDP-based Recessions"),
+      p("When comparing multiple series, click the 'Compare Data on Hover' button in the top-right corner  "),
+      p("*Shaded Areas Represent GDP-based Recessions"),
       p("Data Source: FRED")
     ),
     mainPanel(
