@@ -1,13 +1,6 @@
 #load libraries 
 pacman::p_load(tidyverse, plotly, eFRED, shiny, RColorBrewer, readxl)
 
-#set working directory 
-setwd("C:/Users/matt2/OneDrive/Coding Research/financial research")
-
-#read excel data 
-csv1 <- read_excel("recession.xlsx")
-csv2 <- read_excel("economic events.xlsx")
-
 # set key to pull data from FRED
 api_key <- "21489194ba838be7e47627eb82142f3a"
 set_fred_key(api_key)
@@ -21,7 +14,7 @@ series_list <- list(
   interest_rate = list(value = "DFF"),
   bank_borrow = list(value = "H8B3094NCBA"),
   repo = list(value = "RRPONTSYD"),
-  price_food = list(value = "PFOODINDEXM"),
+  price_food = list(value = "CPIUFDSL"),
   loss_reserves = list(value = "TOTRESNS"),
   interest_payments = list(value = "A091RC1Q027SBEA")
 )
@@ -42,10 +35,10 @@ data_list <- map(series_list, function(series) {
                                                          if_else(series == "DFF", "interest_rate",
                                                                  if_else(series == "H8B3094NCBA", "bank_borrow",
                                                                          if_else(series == "RRPONTSYD", "repo",
-                                                                                 if_else(series == "PFOODINDEXM", "price_food",
+                                                                                 if_else(series == "CPIUFDSL", "price_food",
                                                                                          if_else(series == "TOTRESNS", "loss_reserves",
                                                                                                  if_else(series == "A091RC1Q027SBEA", "interest_payments",
-                                                                                                 "")))))))))))
+                                                                                                         "")))))))))))
 })
 
 
@@ -56,7 +49,12 @@ ui <- fluidPage(
   titlePanel("Economic Health Dashboard"),
   sidebarLayout(
     sidebarPanel(
-      selectInput("series_long", "Select series:", choices = unique(df$series_long), multiple = TRUE)
+      selectInput("series_long", "Select series:", choices = unique(df$series_long), multiple = TRUE),
+      p("Use the date range slider below to select a specific period of time."),
+      p("You can click and drag on the slider to select a range, or click on the handles and move them individually."), 
+      p("Hover your cursor over the line plot to see data series analytics."),
+      p("Shaded Areas Represent GDP-based Recessions"),
+      p("Data Source: FRED")
     ),
     mainPanel(
       plotlyOutput("plot", 900, 600),
@@ -64,7 +62,6 @@ ui <- fluidPage(
     )
   )
 )
-
 
 # server
 server <- function(input, output, session) {
@@ -83,44 +80,86 @@ server <- function(input, output, session) {
   
   # plot
   output$plot <- renderPlotly({
-    filtered_data() %>%
-      plot_ly(x = ~date) %>%
+    data <- filtered_data()
+    
+    p <- plot_ly(data, x = ~date) %>%
       add_lines(y = ~value_norm, name = ~series_long, text = ~paste("Series: ", series_long, "<br>Date: ", date, "<br>Value: ", value, "<br>Pct Change: ", pct_change, "%"), hoverinfo = "text", color = ~series_long) %>%
       layout(
-        title = "Historical Data of Consumer Financial Health",
+        title = "Historical Data of Consumer Financial Health",  # Add a title to the plot
         xaxis = list(
           rangeslider = list(type = "Period Range")
         ),
         yaxis = list(title = "Normalized Value")
       ) %>%
-      # Set the colors for the lines
       layout(plot_bgcolor = "#f7f7f7") %>%
       layout(showlegend = TRUE) %>%
       layout(legend = list(x = 0, y = 1, bgcolor = "#E2E2E2", font = list(size = 10))) %>%
       layout(title = list(x = 0.5)) %>%
-      layout(
-        colorway = colors
-      ) %>%
-      # Enable selection
-      layout(dragmode = "select") 
+      layout(colorway = colors) %>%
+      layout(dragmode = "select")
+    
+    # Add rectangular annotations using layout()
+    p <- layout(p, shapes = list(
+      list(
+        type = "rect",
+        x0 = as.Date("1979-10-01"),
+        x1 = as.Date("1979-10-31"),
+        y0 = 0,
+        y1 = 1,
+        fillcolor = "blue",
+        opacity = 0.1
+      ),
+      list(
+        type = "rect",
+        x0 = as.Date("1981-04-01"),
+        x1 = as.Date("1982-04-01"),
+        y0 = 0,
+        y1 = 1,
+        fillcolor = "blue",
+        opacity = 0.1
+      ),
+      list(
+        type = "rect",
+        x0 = as.Date("1989-10-01"),
+        x1 = as.Date("1991-01-01"),
+        y0 = 0,
+        y1 = 1,
+        fillcolor = "blue",
+        opacity = 0.1
+      ),
+      list(
+        type = "rect",
+        x0 = as.Date("2001-01-01"),
+        x1 = as.Date("2001-07-01"),
+        y0 = 0,
+        y1 = 1,
+        fillcolor = "blue",
+        opacity = 0.1
+      ),
+      list(
+        type = "rect",
+        x0 = as.Date("2007-10-01"),
+        x1 = as.Date("2009-04-01"),
+        y0 = 0,
+        y1 = 1,
+        fillcolor = "blue",
+        opacity = 0.1
+      ),
+      list(
+        type = "rect",
+        x0 = as.Date("2020-01-01"),
+        x1 = as.Date("2020-04-01"),
+        y0 = 0,
+        y1 = 1,
+        fillcolor = "blue",
+        opacity = 0.1
+      )
+    ))
+    
+    p
   })
   
-  # Calculate percent change on selected points
-  output$percent_change <- renderText({
-    selected_points <- event_data("plotly_selected")
-    if (!is.null(selected_points)) {
-      filtered_data <- filtered_data()
-      selected_dates <- selected_points$x  # Get selected dates
-      selected_values <- filtered_data %>% filter(date %in% selected_dates)  # Filter data based on selected dates
-      selected_values <- selected_values[order(selected_values$date), ]  # Sort selected values chronologically
-      if (nrow(selected_values) >= 2) {
-        percent_change <- round(((selected_values$value[2] / selected_values$value[1]) - 1) * 100, 2)
-        paste("Percent Change:", percent_change, "%")
-      } else {
-        "Please select two points"
-      }
-    }
-  })
 }
 
 shinyApp(ui = ui, server = server)
+
