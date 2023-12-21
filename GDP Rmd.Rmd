@@ -80,7 +80,7 @@ To understand what is driving the large increase in Q3 GDP, let's look closer at
 Personal Consumption Expenditures is a key economic indicator used to measure the total value of goods and services consumed by households in an economy over a specific period. Personal Consumption Expenditures are a crucial component of the Gross Domestic Product (GDP) calculation, representing the portion of GDP attributed to consumer spending.
 <br>
 <br>
-Looking at Q3, it is clear that strong consumer spending was a material driver for the growth seen in GDP. It is important to note the revisions to Q3, as the advance estimate ended up being a large miss to the final estimate. This tells us that consumer spending was not as strong as anticipated. When observing the advance to third estimate for GDP and PCE, it can be seen that GDP had no change and PCE had a significant reduction. This indicates that the GDP growth was being influenced by other data.
+Looking at Q3, it is clear that strong consumer spending was a material driver for the growth seen in GDP. It is important to note the revisions to Q3, as the third estimate ended up being a large miss to the advance estimate. This tells us that consumer spending was not as strong as anticipated. When observing the advance to third estimate for GDP and PCE, it can be seen that GDP had no change and PCE had a significant reduction. This indicates that the GDP growth was being influenced by other data.
 ```{r PCE}
 pce <- df %>% 
   filter(name == "Personal Consumption Expenditures") %>% 
@@ -98,7 +98,18 @@ ggplot(pce, aes(x = quarter, y = value, fill = estimate)) +
   scale_fill_manual(values = c("lightblue", "blue", "navy"))
 
 ```
-Analyze Gross Private Domestic Investment estimates and revisions. 
+<br>
+<br>
+<br>
+<br>
+Gross Private Domestic Investment (GPDI) is a key economic indicator that measures the total value of all capital expenditures made by private businesses, households, and nonprofit organizations within a country's borders. It is one of the components used to calculate Gross Domestic Product (GDP) and provides insights into the level of investment activity in an economy.
+<br>
+<br>
+Look at GPDI on a high-level, Q1 to Q3 showed dramatic improvement. The third estimate in Q3 of 10% suggest that this data was a material driver of the 4.9% GDP growth. GDPI data will be broken down further and analyzed later in this report.
+<br>
+<br>
+In summary, a negative GPDI in Q1 may have been influenced by a combination of economic uncertainty, market conditions, and credit constraints. The subsequent increase in GPDI in Q3 could be attributed to factors such as an improving economic outlook, a more favorable business environment, and the resolution of temporary challenges that led to negative investment growth in the earlier quarter.
+
 ```{r GPDI}
 gpdi <- df %>% 
   filter(name == "Gross Private Domestic Investment") %>% 
@@ -116,8 +127,17 @@ ggplot(gpdi, aes(x = quarter, y = value, fill = estimate)) +
   scale_fill_manual(values = c("lightblue", "blue", "navy"))
 
 ```
-
-Analyze Government Consumption & Gross Investment estimates and revisions. 
+<br>
+<br>
+<br>
+<br>
+Government consumption refers to the total value of goods and services purchased and consumed by the government at all levels (federal, state, and local) within a country's borders. This includes spending on salaries for public employees, public infrastructure, defense, education, healthcare, and other government services. Government consumption represents the value of resources used by the government to provide public goods and services. It's a crucial component of GDP because it reflects the direct contribution of the government to the economy through the provision of services and the employment of resources.
+<br>
+<br>
+Gross Investment represents the total value of spending on capital goods (such as machinery, equipment, and structures) that will be used to produce future goods and services. It includes both business and government investment. Gross Investment reflects the level of capital formation and the expansion of the economy's productive capacity. It is a key driver of future economic growth.
+<br>
+<br>
+It is important to note the significant miss between the third and advance estimates. Recalling the previous analysis of consumer spending, we can see a troubling observation. Consumer spending was weaker than expected and government expenditures were higher than expected. Government expenditures data will be broken down further and analyzed later in this report.
 ```{r GCEGI}
 gcegi <- df %>% 
   filter(name == "Government Consumption Expenditures and Gross Investment") %>% 
@@ -135,8 +155,11 @@ ggplot(gcegi, aes(x = quarter, y = value, fill = estimate)) +
   scale_fill_manual(values = c("lightblue", "blue", "navy"))
 
 ```
-
-Analyze Exports and Imports estimates and revisions. 
+<br>
+<br>
+<br>
+<br>
+Exports and imports are vital components of international trade, and they reveal important information about a country's economic health, competitiveness, and relationships with other nations. Here's what exports and imports reveal:
 ```{r EXIM}
 exim <- df %>%
   filter(name %in% c("Exports", "Imports")) %>%
@@ -154,4 +177,32 @@ ggplot(exim, aes(x = quarter, y = value, fill = estimate)) +
        y = "Value") +
   scale_fill_manual(values = c("lightblue", "blue", "navy"))
 
+```
+<br>
+<br>
+<br>
+<br>
+Let's look closer at what makes up Government Consumption Expenditures and Gross Investment. 
+<br>
+<br>
+The first observation from these plots is that all three forms of government expenditures were equal to or greater than overall GDP growth in the third estimate. This means government spending was another significant driver of the Q3 growth, along with Gross Private Domestic Investment. 
+<br>
+<br>
+The increases seen in National Defense spending are driven by the funding of proxy wars in Eurasia. Another pattern to observe is the repeated upward revisions of State and Local spending. 
+```{r deep_GCEGI}
+deep_gcegi <- df %>%
+  filter(name %in% c("National Defense", "Nondefense", "State and Local")) %>%
+  arrange(quarter, estimate) %>%
+  group_by(quarter, name) %>%
+  mutate(sec_min_adv = value - lag(value),
+         third_min_sec = lead(value) - value)
+
+ggplot(deep_gcegi, aes(x = quarter, y = value, fill = estimate)) +
+  geom_col(position = "dodge") +
+  facet_grid(. ~ name, scales = "free_y") +
+  geom_hline(yintercept = 0, color = "black", linetype = "solid", linewidth = 1) +
+  labs(title = "Breakdown of Government Consumption Expenditures and Gross Investment",
+       x = "Quarter",
+       y = "Value") +
+  scale_fill_manual(values = c("lightblue", "blue", "navy"))
 ```
