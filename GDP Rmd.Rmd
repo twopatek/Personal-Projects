@@ -1,0 +1,157 @@
+---
+title: "Revisions to Real Gross Domestic Product and Related Measures: Percent Change from Preceding Period "
+author: "Matthew Adams"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "C:/Users/MatthewAdams/Eduserve Solutions/FPATeam - Documents/Matthew Adams/Personal Doc/Economics")
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+
+pacman::p_load(tidyverse, readxl, janitor)
+```
+The goal of this report is to analyze the three quarters of GDP data that is currently available for the fiscal year 2023. The data is sourced from the Bureau of Economic Analysis. Each quarter is subdivided in advance, second, and third estimates.
+<br>
+<br>
+The terms "advance," "second," and "third estimates" refer to different stages in the process of economic data reporting and revision. Here's an explanation of each term:
+<br>
+<br>
+The advance estimate is the first release of economic data for a particular period.
+It is typically released shortly after the end of the reference period, providing an initial snapshot of economic performance.
+The advance estimate is based on a subset of available data and statistical models, and it is subject to revision as more comprehensive data becomes available.
+<br>
+<br>
+The second estimate is an updated release of economic data that occurs after the advance estimate.
+It incorporates additional data and revisions, providing a more accurate picture of economic indicators.
+The second estimate may still be subject to further revisions in subsequent releases.
+<br>
+<br>
+The third estimate is another revision of economic data that follows the second estimate.
+It incorporates even more comprehensive data, adjustments, and revisions based on additional information that becomes available over time.
+The third estimate is often considered more accurate and reliable than the advance and second estimates.
+<br>
+<br>
+<br>
+<br>
+<br>
+To begin, the data is loaded and processed to prepare it for analysis. 
+```{r data}
+data <- read_excel("FY23 GDP Revision Summary.xlsx")
+
+df <- data %>%
+  clean_names() %>% 
+  pivot_longer(cols = 2:10, names_to = "period", values_to = "value") %>% 
+  rename(name = x1) %>% 
+  separate(period,into=c("quarter", "estimate"), sep= "_")
+
+head(df,10)
+```
+<br>
+<br>
+<br>
+When reviewing Gross Domestic Product as a whole, it can be observed that Q1 experienced a substantial revision from the advance to third estimate. Q2 GDP remained relatively flat amongst the revisions, as well as from the previous quarter. The data concludes with a significant increase in Q3 GDP. 
+```{r GDP}
+gdp <- df %>% 
+  filter(name == "Gross Domestic Product") %>% 
+  arrange(quarter, estimate) %>% 
+  group_by(quarter) %>% 
+  mutate(sec_min_adv = value - lag(value),
+         third_min_sec = lead(value) - value)
+
+ggplot(gdp, aes(x = quarter, y = value, fill = estimate)) +
+  geom_col(position = "dodge") +
+  geom_hline(yintercept = 0, color = "black", linetype = "solid", linewidth = 1) +
+  labs(title = "FY23 Gross Domestic Product Estimates and Revisions ",
+       x = "Quarter",
+       y = "Value") +
+  scale_fill_manual(values = c("lightblue", "blue", "navy"))
+
+```
+<br>
+<br>
+<br>
+<br>
+To understand what is driving the large increase in Q3 GDP, let's look closer at what is under the hood.
+<br>
+<br>
+Personal Consumption Expenditures is a key economic indicator used to measure the total value of goods and services consumed by households in an economy over a specific period. Personal Consumption Expenditures are a crucial component of the Gross Domestic Product (GDP) calculation, representing the portion of GDP attributed to consumer spending.
+<br>
+<br>
+Looking at Q3, it is clear that strong consumer spending was a material driver for the growth seen in GDP. It is important to note the revisions to Q3, as the advance estimate ended up being a large miss to the final estimate. This tells us that consumer spending was not as strong as anticipated. When observing the advance to third estimate for GDP and PCE, it can be seen that GDP had no change and PCE had a significant reduction. This indicates that the GDP growth was being influenced by other data.
+```{r PCE}
+pce <- df %>% 
+  filter(name == "Personal Consumption Expenditures") %>% 
+  arrange(quarter, estimate) %>% 
+  group_by(quarter) %>% 
+  mutate(sec_min_adv = value - lag(value),
+         third_min_sec = lead(value) - value)
+
+ggplot(pce, aes(x = quarter, y = value, fill = estimate)) +
+  geom_col(position = "dodge") +
+  geom_hline(yintercept = 0, color = "black", linetype = "solid", linewidth = 1) +
+  labs(title = "FY23 Personal Consumption Estimates and Revisions ",
+       x = "Quarter",
+       y = "Value") +
+  scale_fill_manual(values = c("lightblue", "blue", "navy"))
+
+```
+Analyze Gross Private Domestic Investment estimates and revisions. 
+```{r GPDI}
+gpdi <- df %>% 
+  filter(name == "Gross Private Domestic Investment") %>% 
+  arrange(quarter, estimate) %>% 
+  group_by(quarter) %>% 
+  mutate(sec_min_adv = value - lag(value),
+         third_min_sec = lead(value) - value)
+
+ggplot(gpdi, aes(x = quarter, y = value, fill = estimate)) +
+  geom_col(position = "dodge") +
+  geom_hline(yintercept = 0, color = "black", linetype = "solid", linewidth = 1) +
+  labs(title = "FY23 Gross Private Domestic Investment Estimates and Revisions ",
+       x = "Quarter",
+       y = "Value") +
+  scale_fill_manual(values = c("lightblue", "blue", "navy"))
+
+```
+
+Analyze Government Consumption & Gross Investment estimates and revisions. 
+```{r GCEGI}
+gcegi <- df %>% 
+  filter(name == "Government Consumption Expenditures and Gross Investment") %>% 
+  arrange(quarter, estimate) %>% 
+  group_by(quarter) %>% 
+  mutate(sec_min_adv = value - lag(value),
+         third_min_sec = lead(value) - value)
+
+ggplot(gcegi, aes(x = quarter, y = value, fill = estimate)) +
+  geom_col(position = "dodge") +
+  geom_hline(yintercept = 0, color = "black", linetype = "solid", linewidth = 1) +
+  labs(title = "FY23 Government Consumption & Gross Investment Estimates and Revisions ",
+       x = "Quarter",
+       y = "Value") +
+  scale_fill_manual(values = c("lightblue", "blue", "navy"))
+
+```
+
+Analyze Exports and Imports estimates and revisions. 
+```{r EXIM}
+exim <- df %>%
+  filter(name %in% c("Exports", "Imports")) %>%
+  arrange(quarter, estimate) %>%
+  group_by(quarter, name) %>%
+  mutate(sec_min_adv = value - lag(value),
+         third_min_sec = lead(value) - value)
+
+ggplot(exim, aes(x = quarter, y = value, fill = estimate)) +
+  geom_col(position = "dodge") +
+  facet_grid(. ~ name, scales = "free_y") +
+  geom_hline(yintercept = 0, color = "black", linetype = "solid", linewidth = 1) +
+  labs(title = "FY23 Exports and Imports Estimates and Revisions",
+       x = "Quarter",
+       y = "Value") +
+  scale_fill_manual(values = c("lightblue", "blue", "navy"))
+
+```
