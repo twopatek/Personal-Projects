@@ -13,10 +13,10 @@ knitr::opts_chunk$set(warning = FALSE)
 
 pacman::p_load(tidyverse, readxl, janitor)
 ```
-The goal of this report is to analyze the three quarters of GDP data that is currently available for the fiscal year 2023. The data is sourced from the Bureau of Economic Analysis. Each quarter is subdivided in advance, second, and third estimates.
+The goal of this report is to analyze the recent GDP release from the Bureau of Economic Analysis. The data includes figures for the last 3 fiscal years, but this report will be focusing on the 3 quarters of FY23 data that is available in the most recent release (December 21, 2023).
 <br>
 <br>
-The terms "advance," "second," and "third estimates" refer to different stages in the process of economic data reporting and revision. Here's an explanation of each term:
+Each quarter is subdivided in advance, second, and third estimates. The terms "advance," "second," and "third" estimates refer to different stages in the process of economic data reporting and revision. Here's an explanation of each term:
 <br>
 <br>
 The advance estimate is the first release of economic data for a particular period.
@@ -37,29 +37,32 @@ The third estimate is often considered more accurate and reliable than the advan
 <br>
 <br>
 <br>
-To begin, the data is loaded and processed to prepare it for analysis. 
+To begin, the data is loaded and processed to prepare it for analysis. For clarification, the exact data set used in this analysis is not directly supplied by the BEA. The data set was manually created by inputting figures from each GDP release for FY23. To access the data set used in this report, navigate to the github repository provided. 
 ```{r data}
 data <- read_excel("FY23 GDP Revision Summary.xlsx")
 
 df <- data %>%
   clean_names() %>% 
-  pivot_longer(cols = 2:10, names_to = "period", values_to = "value") %>% 
+  pivot_longer(cols = 2:19, names_to = "period", values_to = "value") %>% 
   rename(name = x1) %>% 
-  separate(period,into=c("quarter", "estimate"), sep= "_")
-
+  separate(period, into = c("quarter", "estimate"), sep = 3) %>% 
+  mutate(quarter = toupper(str_remove(quarter,"_"))) %>% 
+  separate(estimate, into = c("release_type", "estimate"), sep = "_") %>% 
+  group_by(quarter) %>% 
+  mutate(estimate_var = if_else(estimate != "advance", value - lag(value), NA)) %>% 
+  mutate(full_estimate_var = if_else(estimate == "third", value - lag(value,2), NA)) %>% 
+  ungroup()
+  
 head(df,10)
 ```
 <br>
 <br>
 <br>
-When reviewing Gross Domestic Product as a whole, it can be observed that Q1 experienced a substantial revision from the advance to third estimate. Q2 GDP remained relatively flat amongst the revisions, as well as from the previous quarter. The data concludes with a significant increase in Q3 GDP. 
+When reviewing Gross Domestic Product as a whole, it can be observed that Q1 experienced a substantial revision from the advance to third estimate. Q2 GDP remained relatively flat across the revisions, as well as from the previous quarter. The data concludes with a significant increase in Q3 GDP. 
 ```{r GDP}
 gdp <- df %>% 
   filter(name == "Gross Domestic Product") %>% 
-  arrange(quarter, estimate) %>% 
-  group_by(quarter) %>% 
-  mutate(sec_min_adv = value - lag(value),
-         third_min_sec = lead(value) - value)
+  filter(release_type == "delta")
 
 ggplot(gdp, aes(x = quarter, y = value, fill = estimate)) +
   geom_col(position = "dodge") +
@@ -68,7 +71,6 @@ ggplot(gdp, aes(x = quarter, y = value, fill = estimate)) +
        x = "Quarter",
        y = "Value") +
   scale_fill_manual(values = c("lightblue", "blue", "navy"))
-
 ```
 <br>
 <br>
@@ -84,10 +86,7 @@ Looking at Q3, it is clear that strong consumer spending was a material driver f
 ```{r PCE}
 pce <- df %>% 
   filter(name == "Personal Consumption Expenditures") %>% 
-  arrange(quarter, estimate) %>% 
-  group_by(quarter) %>% 
-  mutate(sec_min_adv = value - lag(value),
-         third_min_sec = lead(value) - value)
+  filter(release_type == "delta")
 
 ggplot(pce, aes(x = quarter, y = value, fill = estimate)) +
   geom_col(position = "dodge") +
@@ -96,7 +95,6 @@ ggplot(pce, aes(x = quarter, y = value, fill = estimate)) +
        x = "Quarter",
        y = "Value") +
   scale_fill_manual(values = c("lightblue", "blue", "navy"))
-
 ```
 <br>
 <br>
@@ -113,10 +111,7 @@ In summary, a negative GPDI in Q1 may have been influenced by a combination of e
 ```{r GPDI}
 gpdi <- df %>% 
   filter(name == "Gross Private Domestic Investment") %>% 
-  arrange(quarter, estimate) %>% 
-  group_by(quarter) %>% 
-  mutate(sec_min_adv = value - lag(value),
-         third_min_sec = lead(value) - value)
+  filter(release_type == "delta")
 
 ggplot(gpdi, aes(x = quarter, y = value, fill = estimate)) +
   geom_col(position = "dodge") +
@@ -125,7 +120,6 @@ ggplot(gpdi, aes(x = quarter, y = value, fill = estimate)) +
        x = "Quarter",
        y = "Value") +
   scale_fill_manual(values = c("lightblue", "blue", "navy"))
-
 ```
 <br>
 <br>
@@ -141,10 +135,7 @@ It is important to note the significant miss between the third and advance estim
 ```{r GCEGI}
 gcegi <- df %>% 
   filter(name == "Government Consumption Expenditures and Gross Investment") %>% 
-  arrange(quarter, estimate) %>% 
-  group_by(quarter) %>% 
-  mutate(sec_min_adv = value - lag(value),
-         third_min_sec = lead(value) - value)
+  filter(release_type == "delta")
 
 ggplot(gcegi, aes(x = quarter, y = value, fill = estimate)) +
   geom_col(position = "dodge") +
@@ -153,7 +144,6 @@ ggplot(gcegi, aes(x = quarter, y = value, fill = estimate)) +
        x = "Quarter",
        y = "Value") +
   scale_fill_manual(values = c("lightblue", "blue", "navy"))
-
 ```
 <br>
 <br>
@@ -162,11 +152,8 @@ ggplot(gcegi, aes(x = quarter, y = value, fill = estimate)) +
 Exports and imports are vital components of international trade, and they reveal important information about a country's economic health, competitiveness, and relationships with other nations. Here's what exports and imports reveal:
 ```{r EXIM}
 exim <- df %>%
-  filter(name %in% c("Exports", "Imports")) %>%
-  arrange(quarter, estimate) %>%
-  group_by(quarter, name) %>%
-  mutate(sec_min_adv = value - lag(value),
-         third_min_sec = lead(value) - value)
+  filter(name %in% c("Exports", "Imports")) %>% 
+  filter(release_type == "delta")
 
 ggplot(exim, aes(x = quarter, y = value, fill = estimate)) +
   geom_col(position = "dodge") +
@@ -176,7 +163,25 @@ ggplot(exim, aes(x = quarter, y = value, fill = estimate)) +
        x = "Quarter",
        y = "Value") +
   scale_fill_manual(values = c("lightblue", "blue", "navy"))
+```
+<br>
+<br>
+<br>
+<br>
+Now let's look at exports and imports in the net.
+```{r NETEXIM}
+exim <- df %>%
+  filter(name == "Net Exports of Goods and Services") %>% 
+  filter(release_type == "delta")
 
+ggplot(exim, aes(x = quarter, y = value, fill = estimate)) +
+  geom_col(position = "dodge") +
+  facet_grid(. ~ name, scales = "free_y") +
+  geom_hline(yintercept = 0, color = "black", linetype = "solid", linewidth = 1) +
+  labs(title = "FY23 Net Exports and Imports Estimates and Revisions",
+       x = "Quarter",
+       y = "Value") +
+  scale_fill_manual(values = c("lightblue", "blue", "navy"))
 ```
 <br>
 <br>
@@ -185,17 +190,14 @@ ggplot(exim, aes(x = quarter, y = value, fill = estimate)) +
 Let's look closer at what makes up Government Consumption Expenditures and Gross Investment. 
 <br>
 <br>
-The first observation from these plots is that all three forms of government expenditures were equal to or greater than overall GDP growth in the third estimate. This means government spending was another significant driver of the Q3 growth, along with Gross Private Domestic Investment. 
+The first observation from these plots is that all three forms of government expenditures were equal to or greater than overall GDP expansion in the third estimate. This means government spending was another significant driver of the Q3 expansion, along with Gross Private Domestic Investment. 
 <br>
 <br>
 The increases seen in National Defense spending are driven by the funding of proxy wars in Eurasia. Another pattern to observe is the repeated upward revisions of State and Local spending. 
 ```{r deep_GCEGI}
 deep_gcegi <- df %>%
-  filter(name %in% c("National Defense", "Nondefense", "State and Local")) %>%
-  arrange(quarter, estimate) %>%
-  group_by(quarter, name) %>%
-  mutate(sec_min_adv = value - lag(value),
-         third_min_sec = lead(value) - value)
+  filter(name %in% c("National Defense", "Nondefense", "State and Local")) %>% 
+  filter(release_type == "delta")
 
 ggplot(deep_gcegi, aes(x = quarter, y = value, fill = estimate)) +
   geom_col(position = "dodge") +
@@ -205,4 +207,80 @@ ggplot(deep_gcegi, aes(x = quarter, y = value, fill = estimate)) +
        x = "Quarter",
        y = "Value") +
   scale_fill_manual(values = c("lightblue", "blue", "navy"))
+```
+<br>
+<br>
+<br>
+<br>
+In previous sections of this report, analyzing the percent change in subgroups of GDP provided a glimpse of what the major drivers of growth were. To get a clearer picture of what is driving GDP expansions or contractions, we can analyze the Contributions to Percent Change in Real Gross Domestic Product. 
+<br>
+<br>
+Looking at the plot, it is clear that Personal Consumption Expenditures are the largest driving force of GDP expansion, especially Q3. Staying in Q3, it can be seen that Gross Private Domestic Investment is also a substantial driver of expansion.
+```{r contributions}
+contributions <- df %>% 
+  filter(name %in% c("Personal Consumption Expenditures",
+                     "Gross Private Domestic Investment",
+                     "Net Exports of Goods and Services",
+                     "Government Consumption Expenditures and Gross Investment")) %>% 
+  filter(release_type == "contribution")
+
+contributions$name <- str_wrap(contributions$name, width = 20)
+
+ggplot(contributions, aes(x = quarter, y = value, fill = estimate)) +
+  geom_col(position = "dodge") +
+  facet_grid(. ~ name, scales = "free_y") +
+  geom_hline(yintercept = 0, color = "black", linetype = "solid", linewidth = 1) +
+  labs(title = "Contributions to GDP Growth",
+       x = "Quarter",
+       y = "Value") +
+  scale_fill_manual(values = c("lightblue", "blue", "navy"))
+```
+<br>
+<br>
+<br>
+<br>
+Government Consumption Expenditures and Gross Investment can be subdivided into two main categories: Federal and State & Local. Both categories contain Consumption Expenditures and Gross investment, with Federal grouping this into National Defense and Nondefense. 
+```{r contributions gov spend}
+gov_spending <- df %>% 
+  filter(name %in% c("Federal",
+                     "National Defense",
+                     "Nondefense",
+                     "State and Local")) %>% 
+  filter(release_type == "contribution")
+
+ggplot(gov_spending, aes(x = quarter, y = value, fill = estimate)) +
+  geom_col(position = "dodge") +
+  facet_grid(. ~ name, scales = "free_y") +
+  geom_hline(yintercept = 0, color = "black", linetype = "solid", linewidth = 1) +
+  labs(title = "Government Consumption Contributions to GDP Growth",
+       x = "Quarter",
+       y = "Value") +
+  scale_fill_manual(values = c("lightblue", "blue", "navy"))
+```
+<br>
+<br>
+<br>
+<br>
+The final section of this report focuses on the revisions themselves and what story they tell. The analysis considers two revision variances: Third Estimate minus Second Estimate and Third Estimate minus Advance Estimate. 
+<br>
+<br>
+Comparing Third Estimate to Second Estimate focuses on the changes made between the second and third estimates, providing insights into the recent adjustments to the data.It helps assess the stability of the estimates and whether there have been material revisions in the latest release. This analysis is more targeted at understanding how the most recent data releases have influenced the overall picture.
+<br>
+<br>
+Comparing Third Estimate to Advance Estimate helps you understand how much the initial estimate (advance estimate) has changed as more data becomes available.
+It provides insights into the revisions made to the economic data over the estimation period. This analysis helps assess the accuracy of the initial estimate and whether there were significant adjustments based on additional information.
+```{r revisions}
+revisions_q <- df %>% 
+  filter(estimate == "third",
+         release_type == "delta") %>% 
+  group_by(quarter) %>% 
+  summarise(rev2_mean = round(mean(estimate_var), 2), rev3_mean = round(mean(full_estimate_var), 2))
+
+revisions_name <- df %>% 
+  filter(estimate == "third",
+         release_type == "delta") %>% 
+  group_by(name) %>% 
+  summarise(rev2_mean = round(mean(estimate_var), 2), rev3_mean = round(mean(full_estimate_var), 2))
+
+revisions_q
 ```
