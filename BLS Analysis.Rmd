@@ -1,0 +1,241 @@
+---
+title: "BLS Analysis"
+author: "Matthew Adams"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "C:/Users/MatthewAdams/Eduserve Solutions/FPATeam - Documents/Matthew Adams/Personal Doc/Economics")
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(fig.height = 5, fig.width = 10)
+
+pacman::p_load(tidyverse, readxl, janitor, RColorBrewer, scales, eFRED, lubdridate, plotly)
+```
+
+```{r data}
+# read excel file
+predf <- read_excel("BLS Analysis.xlsx", sheet = "Summary")
+
+#process and manipulate data
+df <- predf %>% 
+  clean_names() %>% 
+  pivot_longer(cols = 2:5, names_to = "type", values_to = "value") %>% 
+  mutate(initial_release_date = as_date(initial_release_date)) %>% 
+  mutate(revised_release_date = as_date(revised_release_date))
+
+# convert month from character to month format
+df$month <- factor(df$month, levels = month.name)
+
+# view data
+df
+```
+<br>
+This data set was manually created using a combination of official Bureau of Labor Statistics data and monthly released jobs reports from 2023. The BLS data, which shows the final(revised) figures, can be accessed here : https://data.bls.gov/cgi-bin/surveymost  Unfortunately, the link does not currently work when accessed through this document. If it is not working at time of access, you can copy the link into your search browser or follow these steps: On the BLS.gov website, navigate to Data Tools and select BLS Popular Series. Then select the Total Nonfarm Employment series from the Employment section. Finally, click Retrieve Data at the bottom. Monthly Job reports were used in data sourcing because they include the market estimates and initial(pre-revision) figures. This allows us to see what was expected, what was reported, and what was revised.
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+```{r plot}
+# assign chronological order to value type
+type_order <- c("dow_jones_consensus_estimate",
+                "initial_release",
+                "revised_release",
+                "release_variance")
+
+# create bar graph
+ggplot(df, aes(x = month, y = value, fill = fct_reorder(type, match(type, type_order)))) +
+  geom_col(position = "dodge") +
+  scale_fill_manual(
+    values = c("dow_jones_consensus_estimate" = "navy", 
+               "initial_release" = "blue", 
+               "revised_release" = "lightblue", 
+               "release_variance" = "orange"),
+    labels = c("dow_jones_consensus_estimate" = "Dow Jones Consensus Estimate",
+               "initial_release" = "Initial Release",
+               "revised_release" = "Revised Release",
+               "release_variance" = "Release Variance")
+  ) +
+  guides(fill = guide_legend(title = "Data Type")) + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Change in Total Nonfarm Payroll Employment", x = "Month", y = "Value") +
+  geom_vline(xintercept = seq(0.5, length(unique(df$month)) - 0.5), linetype = "dashed", color = "darkgrey") +
+  scale_y_continuous(breaks = seq(-150, 550, by = 50), limits = c(-150, 550))
+```
+<br>
+<br>
+The best way to analyze the full year of BLS Job figures is to plot each month's estimate, initial value, revised value, and the size of the revision. It can be seen that initial values beat expectations 8/12 months, but were revised down 10/11 months (December revision is NA). 
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+```{r report}
+# generate report data frame with summary statistics
+report <- df %>% 
+  group_by(month) %>% 
+  mutate(beat_exp = if_else(value[type == "initial_release"] > value[type == "dow_jones_consensus_estimate"], "Yes", "No")) %>% 
+  mutate(rev_percent = round((value[type == "release_variance"] / value[type == "initial_release"]), 2)) %>% 
+  mutate(exp_var_pct = round((((value[type == "initial_release"])-(value[type == "dow_jones_consensus_estimate"])) / value[type == "dow_jones_consensus_estimate"]), 2)) %>% 
+  summarise(beat_exp = first(beat_exp),
+            exp_var_pct = first(exp_var_pct),
+            rev_percent = first(rev_percent)) %>%
+  mutate(avg_exp_var = sum(unique(exp_var_pct))/n_distinct(df$month),
+         avg_rev_pct = sum(unique(rev_percent))/11)
+
+# view report
+print(report)
+```
+Summary statistics are created to tell a high-level story of the jobs data for 2023. On average, initial reports beat expectations by 36.75% and were revised down 15.36%. 
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+```{r summary}
+summary23 <- df %>% 
+  summarise(estimate_sum = sum(value[type == "dow_jones_consensus_estimate"])*1000,
+            initial_sum = sum(value[type == "initial_release"])*1000,
+            revised_sum = sum(value[type == "revised_release"])*1000,
+            variance_sum = -sum(value[type == "release_variance"])*1000
+            )
+
+summary23 <- summary23 %>% 
+  pivot_longer(cols = 1:4, names_to = "name", values_to = "value")
+
+ggplot(summary23, aes(x = name, y = value, fill = name)) +
+         geom_bar(stat = "identity") +
+  scale_fill_manual(
+    values = c("estimate_sum" = "navy", 
+               "initial_sum" = "blue", 
+               "revised_sum" = "lightblue", 
+               "variance_sum" = "orange"),
+    labels = c("estimate_sum" = "Dow Jones Consensus Estimate",
+               "initial_sum" = "Initial Release",
+               "revised_sum" = "Revised Release",
+               "variance_sum" = "Release Variance")
+  )+
+  scale_y_continuous(labels = comma, breaks = seq(0, 3200000, by = 250000), limits = c(0, 3200000)) +
+  labs(title = "2023 Nonfarm Payroll Employment Summary", x = "", y = "Change in Nonfarm Payroll") +
+  theme_minimal()
+```
+Looking at the full year picture, initial BLS releases surpassed estimates by 810,000 jobs. Initial releases were revised down 443,000 jobs, which resulted in a final figure of 367,000 more jobs than estimated. 
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+```{r sp500 performance}
+# set key to pull data from FRED
+api_key <- "21489194ba838be7e47627eb82142f3a"
+set_fred_key(api_key)
+
+# load SP500 data from FRED
+gscp <- fred(sp500 = "SP500") %>% 
+  filter(date >= "2023-01-01",
+         date <= "2023-12-31") %>% 
+  filter(!is.na(sp500))
+
+# data set of Initial BLS release dates
+bls_release_dates <- unique(df$initial_release_date)
+
+# create data to show how the SP500 performed the subsequent week after a jobs report release
+gscp_df <- gscp %>%
+  mutate(release = if_else(date %in% bls_release_dates, "yes", "no")) %>%
+  mutate(test = if_else(release == "yes", "yes", lag(release, n=5, default = "no"))) %>% 
+  mutate(month = month(ymd(date))) %>% 
+  filter(test == "yes") %>% 
+  group_by(month) %>% 
+  mutate(return = (sp500[release == "no"] - sp500[release == "yes"])/sp500[release == "yes"]) %>% 
+  filter(release == "yes")
+
+gscp_df
+```
+This table aims to observe how SP500 behaves following an Employment Situation Release. This is done by calculating the return for the week that immediately proceeds the release. Because all releases are on the first Friday of the month, the return is calculated from the next Monday-Friday.
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+```{r sp500 chart}
+filtered_gscp <- gscp %>% 
+  mutate(month = month(ymd(date))) %>% 
+  mutate(value_norm = ifelse(is.na(sp500), NA, round((sp500 / max(sp500, na.rm = TRUE)), 2))) %>% 
+  group_by(month) %>% 
+  mutate(return = round(((last(sp500) - first(sp500)) / first(sp500)) * 100, 2)) %>% 
+  ungroup() %>% 
+  mutate(annual_return = round(((last(sp500) - first(sp500)) / first(sp500)) * 100, 2))
+
+# Add a random date for each month in filtered_gscp
+filtered_gscp <- filtered_gscp %>%
+  group_by(month) %>%
+  mutate(random_date = sample(date, 1)) %>%
+  ungroup()
+  
+# Create a lookup table for month names and corresponding first day of the month
+month_lookup <- data.frame(
+  month = month.name,
+  date = floor_date(ymd("2022-01-01") + months(0:11), "month")
+)
+
+# Merge the beat_exp_test data with the month_lookup table to get the first day of the month
+beat_exp_test <- report %>% 
+  select(month, exp_var_pct, rev_percent) %>% 
+  left_join(month_lookup, by = c("month" = "month")) %>% 
+  mutate(exp_pct = round(exp_var_pct * 100, 2)) %>% 
+  mutate(rev_pct = round(rev_percent * 100, 2)) %>% 
+  mutate(month = month(date)) %>% 
+  select(-date)
+
+merged_data <- left_join(filtered_gscp, beat_exp_test, by = "month")
+  # mutate(pct_norm = ifelse(is.na(pct), NA, round((pct / max(pct, na.rm = TRUE)), 2)))
+
+plot_ly() %>%
+  add_trace(data = merged_data, 
+            x = ~date, y = ~value_norm, 
+            color = ~factor(month),
+            text = ~paste("Date: ", date, "<br>Monthly Return: ", return, "%"),
+            type = 'scatter', mode = 'lines') %>%
+  
+  add_trace(data = merged_data,
+            x = ~date, y = ~exp_var_pct,
+            text = ~paste("Expectation Variance: ", exp_pct, "%"),
+            type = 'scatter', mode = 'lines',
+            line = list(color = 'red', dash = 'dash'),
+            name = 'Expectation Variance') %>%
+   add_trace(data = merged_data,
+            x = ~date, y = ~rev_percent,
+            text = ~paste("Revision Variance: ", rev_pct, "%"),
+            type = 'scatter', mode = 'lines',
+            line = list(color = 'orange', dash = 'dash'),
+            name = 'Revision Variance') %>%
+  
+  layout(title = "SP500 Performance & Variance",
+         xaxis = list(title = "Date"),
+         yaxis = list(title = "Normalized Value"),
+         dragmode = "zoom",  # Enable zoom with mouse
+         showlegend = TRUE)
+
+```
+Hover your pointer over the plot lines to see series details. To use the zoom feature, draw a box with your mouse around the area you would like to zoom. Double-click to return to the normal view. You can isolate a specific series by double-clicking it in the right side of the plot. For example, to see just January, double-click the first line with the "1" next to it.
+<br>
+<br>
+<br>
+To get a better understanding of how the SP500 interacts with releases, we can plot it with various metrics related to the jobs report. The dotted red line represents the percent variance of the initial release and the estimate. Negative values indicate releases below expectations. The orange line represents the percent change of the revision to each initial release. 
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
