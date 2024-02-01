@@ -1,0 +1,100 @@
+---
+title: "PDF Scraper Demo"
+author: "Matthew Adams"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+pacman::p_load(pdftools, stringr, writexl, janitor)
+```
+
+```{r create list}
+# Specify the folder containing the PDF files
+folder_path <- "C:/Users/MatthewAdams/Eduserve Solutions/FPATeam - Documents/Matthew Adams/CSUSA Projects/PDF Scraper Demo"
+
+# Get a list of PDF files in the folder
+pdf_files <- list.files(path = folder_path, pattern = "\\.pdf$", full.names = TRUE)
+
+# Create an empty list to store the data frames for each PDF
+all_invoice_dfs <- list()
+```
+
+```{r pressure, echo=FALSE}
+# Iterate through each PDF file
+for (pdf_file in pdf_files) {
+  # Extract text from the first page of the PDF
+  pdf_text <- pdf_text(pdf_file)
+  text_first_page <- pdf_text[1]
+  
+  # Split the text into lines
+  lines <- strsplit(text_first_page, "\n")[[1]]
+  
+  # Extract relevant information using regular expressions
+  invoice_number <- grep("Invoice #:", lines, value = TRUE)
+  date <- grep("Invoice Date:", lines, value = TRUE)
+  insurance_amount <- grep("Insurance", lines, value = TRUE)
+  hts_supplemental_amount <- grep(" HTS Supplemental", lines, value = TRUE)
+  monitors_amount <- grep("Monitors", lines, value = TRUE)
+  hts_prebill_amount <- grep("HTS Prebill", lines, value = TRUE)
+  fuel_amount <- grep("Fuel", lines, value = TRUE)
+  ec_amount <- grep("Extra", lines, value = TRUE)
+  
+  # Check if patterns were found before extracting values
+  invoice_number <- ifelse(length(invoice_number) > 0, gsub("Invoice #: ", "", invoice_number), NA)
+  date <- ifelse(length(date) > 0, gsub("Invoice Date: ", "", date), NA)
+  insurance_amount <- ifelse(length(insurance_amount) > 0, gsub("Insurance: ", "", insurance_amount), NA)
+  hts_supplemental_amount <- ifelse(length(hts_supplemental_amount) > 0, gsub("Supplemental: ", "", hts_supplemental_amount), NA)
+  monitors_amount <- ifelse(length(monitors_amount) > 0, gsub("Monitor: ", "", monitors_amount), NA)
+  hts_prebill_amount <- ifelse(length(hts_prebill_amount) > 0, gsub("Regular: ", "", hts_prebill_amount), NA)
+  fuel_amount <- ifelse(length(fuel_amount) > 0, gsub("Fuel : ", "", fuel_amount), NA)
+  ec_amount <- ifelse(length(fuel_amount) > 0, gsub("Extra : ", "", ec_amount), NA)
+  
+  # Create a data frame with the extracted information
+  invoice_df <- data.frame(
+    Invoice_Number = invoice_number,
+    Date = date,
+    Insurance_Amount = insurance_amount,
+    HTS_Supplemental_Amount = hts_supplemental_amount,
+    Monitors_Amount = monitors_amount,
+    Hts_Prebill_Amount = hts_prebill_amount,
+    Fuel_Amount = fuel_amount,
+    EC_Amount = ec_amount,
+    stringsAsFactors = FALSE
+  )
+  
+  # Add the data frame to the list
+  all_invoice_dfs[[pdf_file]] <- invoice_df
+}
+```
+
+```{r }
+# Combine all data frames into a single data frame
+combined_invoice_df <- do.call(rbind, all_invoice_dfs) %>% 
+  clean_names() %>% 
+  mutate(invoice_number = trimws(invoice_number)) %>% 
+  mutate(date = trimws(date)) %>% 
+  mutate(insurance_amount = trimws(insurance_amount)) %>% 
+  mutate(hts_supplemental_amount = trimws(hts_supplemental_amount)) %>% 
+  mutate(monitors_amount = trimws(monitors_amount)) %>% 
+  mutate(hts_prebill_amount = trimws(hts_prebill_amount)) %>% 
+  mutate(fuel_amount = trimws(fuel_amount)) %>%
+  mutate(ec_amount = trimws(ec_amount)) %>%
+  rownames_to_column("bill_title") %>% 
+  mutate(bill_title = sub(".*/", "", bill_title)) %>% 
+  pivot_longer(cols = 4:9, names_to = "names", values_to = "values") %>% 
+  separate(values, into = c("detail", "amount"), sep = "\\$") %>% 
+  mutate(rm = if_else(is.na(amount), "rm", "keep")) %>% 
+  filter(rm == "keep") %>% 
+  select(-rm, -detail)
+```
+
+```{r }
+write_xlsx(combined_invoice_df, "iber_bus_ytd.xlsx")
+```
+
+```{r }
+
+```
