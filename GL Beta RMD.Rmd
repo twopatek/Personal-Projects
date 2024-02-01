@@ -1,0 +1,196 @@
+---
+title: "General Ledger Demo"
+output: 
+  html_document:
+    self_contained: false
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+pacman::p_load(shiny, tidyverse, lubridate, purrr, janitor, openxlsx, shinythemes)
+
+# Create Vector String to remove rows with "Total"
+rows_to_rm <- c("Total")
+
+# Create Vector to Categorize Accounts
+building_rm <- c("63120","63140","63160","63180","63200","63220",
+                 "63240","63260","63280","63281","63300","63320",
+                 "63340","63360","63380","63400","63420","63440",
+                 "63460","63470","63480","63520","36540","63560",
+                 "63580","63720")
+
+compensation <- c("60020","60040","60060","60080","60100","60120",
+                  "60140","60420","60440","60480","60520","60640",
+                  "60660","60680","60690")
+mgmt_fees <- c("61520","61530","61540","61560","61580","61620")
+
+instr_supplies <- c("65030","65010","65020","65240","65000","65041",
+                    "65060","65100","65040")
+utilities <- c("64720","64740","64760","64780","64910","64920",
+               "64930","64940","64990","64980")
+```
+
+```{r themes}
+theme = shinytheme("cerulean")
+# theme = shinytheme("darkly")
+# theme = shinytheme("united")
+```
+
+```{r User Interface}
+# Define UI for application
+ui <- fillPage(padding = 80,
+               theme = theme,
+  
+  # Application title
+  titlePanel("Dashboard Beta"),
+  
+  tabsetPanel(
+    tabPanel("Upload/Download",
+             sidebarLayout(
+               sidebarPanel(
+                 fileInput("upload", "Upload General Ledger File"),
+                 downloadButton("downloadData", "Download Processed Data"),
+                 p(""),
+                 p("Select desired general ledger from Netsuite and click expand all rows. Download and save as Microsoft Excel Workbook file type."),
+                 p("Using the 'Browse' button, select your saved ledger and wait for the data to appear on the right. Click download to finish.")
+               ),
+               mainPanel(
+                   fluidRow(
+                   column(width = 12, style = "max-height: 500px; overflow-y: auto;",
+                          tableOutput("files")),
+                   verbatimTextOutput("error_message")  # Output error message here
+                   )
+             )
+             )
+    )
+  )
+)
+```
+
+```{r Server Function}
+# Define server logic required to process the uploaded file
+server <- function(input, output) {
+  
+  # Set Maximum File Upload Size, Set to 100 MB
+  
+  options(shiny.maxRequestSize=100*1024^2)
+
+  
+  # Function to read the uploaded file and store it as an object
+  processFile <- reactive({
+    req(input$upload)  # Ensure that a file is uploaded
+    inFile <- input$upload
+    
+         # Check the type of the uploaded file and read accordingly
+    if (!grepl("\\.xlsx$", inFile$name, ignore.case = TRUE)) {
+      output$error_message <- renderText("Unsupported file type. Please upload an Excel (.xlsx) file.")
+      processing_status(FALSE)  # Set processing flag to false
+      return(NULL)
+    } else {
+      output$error_message <- renderText(NULL)  # Clear error message when criteria is met
+    }
+    
+    data <- openxlsx::read.xlsx(inFile$datapath)
+
+    # Data Wrangling Steps
+    
+    csv <- data %>% 
+      slice(-(1:3))
+    
+    # Set the column names to the values in the first row
+    colnames(csv) <- unlist(csv[1, ])
+    
+    # Remove the first row, which is now used as column names
+    csv <- csv[-1, ]
+    
+    df <- csv %>% 
+      select(-Balance) %>%
+      filter(!grepl(paste(rows_to_rm, collapse = "|"), Account)) %>% 
+      fill(Account) %>% 
+      mutate(test = if_else(is.na(Type),"0","1")) %>% 
+      relocate(test, .after = Type) %>% 
+      filter(test != "0") %>% 
+      select(-test) %>% 
+      mutate(Account_Num = str_sub(Account,1,5)) %>% 
+      relocate(Account_Num, .before = Account) %>% 
+      filter(Account_Num > 40000) %>% 
+      mutate(indicator = str_sub(Account_Num,1,1)) %>% 
+      relocate(indicator, .before = Account_Num) %>% 
+      mutate(Credit = as.numeric(Credit),
+             Credit2 = if_else(indicator == "4" & is.na(Credit),-as.numeric(Debit), Credit)) %>% 
+      mutate(Debit = as.numeric(Debit),
+             Debit2 = if_else(indicator != "4" & is.na(Debit),-as.numeric(Credit), Debit)) %>%
+      mutate(Debit_Credit = round(if_else(indicator == "4",Credit2,
+                                          if_else(indicator != "4",Debit2,Credit2)), 2)) %>%
+      select(-Debit2, -Credit2) %>% 
+      relocate(Debit_Credit, .before = Debit) %>% 
+      mutate(Debit = round(Debit, 2),
+             Credit = round(Credit, 2)) %>%
+      mutate(Account_Title = substring(Account, 8)) %>% 
+      relocate(Account_Title, .before = Account) %>% 
+      mutate(Date = as.numeric(Date), 
+             Date = as.Date(Date, origin = "1899-12-30")) %>% 
+      mutate(Category = if_else(Account_Num %in% building_rm,"Building R&M",
+                                if_else(Account_Num %in% compensation, "Compensation",
+                                        ifelse(Account_Num %in% mgmt_fees, "Management Fees",
+                                               if_else(Account_Num %in% instr_supplies, "Instructional",
+                                                       if_else(Account_Num %in% utilities, "Utilities",
+                                                               if_else(indicator == "4","Revenue",""))))))) %>% 
+      relocate(Category, .before = Account_Num) %>% 
+      select(-1,-3,-4,-11,-12,-17,-18,-19,-20,-21)
+    
+    
+    # Additional Information Extraction (if needed)
+    label <- data %>% select(1) %>% slice(1:3)
+    
+    schoolname <- label %>% slice(1)
+    schoolname <- sub(".*:", "", schoolname)
+    schoolname <- trimws(schoolname) %>% data_frame()
+
+    period_range <- label %>% slice(3)
+
+    source <- "Netsuite"
+    source <- data_frame(source)
+    
+    merge1 <- merge(schoolname, period_range)
+    
+    ledger_label <- merge(merge1, source) %>% 
+      rename("school" = ".") %>% 
+      rename("period range" = "Eduserve,.Inc")
+    
+    # Store the data and label as objects
+    result <- list(
+      data = df,
+      label = ledger_label
+    )
+
+    return(result)
+  })
+  
+  # Render the table of the uploaded data
+  output$files <- renderTable({
+    df <- processFile()$data
+    df
+  }, height = "1000px")  # Set the desired height (e.g., "500px")
+
+  # Add download handler
+  output$downloadData <- downloadHandler(
+    filename = function() {
+      paste("processed_GL_", Sys.Date(), ".xlsx", sep = "")
+    },
+    content = function(file) {
+      result <- processFile()
+
+      # Write to Excel workbook using writexl
+      writexl::write_xlsx(list(Data = result$data, Info = result$label), path = file)
+    }
+  )
+}
+```
+
+```{r Run Application}
+# Run the application
+shinyApp(ui = ui, server = server)
+```
