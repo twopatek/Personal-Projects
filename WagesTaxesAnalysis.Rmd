@@ -1,0 +1,152 @@
+---
+title: "Taxes Estimation"
+author: "Matthew Adams"
+date: "`r Sys.date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+pacman::p_load(shiny, tidyverse, lubridate, readxl, writexl, purrr, janitor, DT)
+setwd("C:/Users/MatthewAdams/Eduserve Solutions/FPATeam - Documents/Matthew Adams/CSUSA Projects/General Ledger Demo")
+```
+
+```{r cars}
+#Create Vector String to remove rows with "Total"
+rows_to_remove <- c("Total")
+
+#Create Vector to Categorize accounts
+building_repairs_maintenance_accounts <- c("63120","63140","63160","63180","63200","63220",
+                 "63240","63260","63280","63281","63300","63320",
+                 "63340","63360","63380","63400","63420","63440",
+                 "63460","63470","63480","63520","36540","63560",
+                 "63580","63720")
+
+compensation_accounts <- c("60020","60040","60060","60080","60100","60120",
+                  "60140","60420","60440","60480","60520","60640",
+                  "60660","60680","60690")
+management_fee_accounts <- c("61520","61530","61540","61560","61580","61620")
+
+instructional_accounts <- c("65030","65010","65020","65240","65000","65041",
+                    "65060","65100","65040")
+utility_accounts <- c("64720","64740","64760","64780","64910","64920",
+               "64930","64940","64990","64980")
+
+wage_accounts <- c("60020 - Regular Wages-Exempt", "60040 - Regular Wages-Non-Exempt",
+                                     "60060 - Overtime", "60080 - Bonus", "60100 - 10 Month Accrual", "60120 - Stipend")
+
+tax_accounts <- c("60640 - FICA", "60660 - FUTA", "60680 - SUTA", "60690 - 10 Month Accrual Payroll Taxes")
+
+benefit_accounts <- c("60140 - Sick Day Buy Out","60420 - General Benefits", "60440 - 401(k) Match", 
+                          "60480 - Employee insurance", "60520 - Workers Compensation")
+
+
+```
+
+```{r pressure, echo=FALSE}
+data <- openxlsx::read.xlsx("iber_dec_gl.xlsx")
+
+csv <- data %>% 
+  slice(-(1:3))
+
+colnames(csv) <- unlist(csv[1, ])
+
+csv <- csv[-1, ]
+
+df <- csv %>% 
+  clean_names() %>% 
+  select(-balance) %>%
+  filter(!grepl(paste(rows_to_remove, collapse = "|"), account)) %>% 
+  fill(account) %>% 
+  mutate(test = if_else(is.na(type),"0","1")) %>% 
+  relocate(test, .after = type) %>% 
+  filter(test != "0") %>% 
+  select(-test) %>% 
+  mutate(account_number = str_sub(account,1,5)) %>% 
+  relocate(account_number, .before = account) %>% 
+  filter(account_number > 40000) %>% 
+  mutate(indicator = str_sub(account_number,1,1)) %>% 
+  relocate(indicator, .before = account_number) %>% 
+  mutate(credit = as.numeric(credit),
+         credit2 = if_else(indicator == "4" & is.na(credit),-as.numeric(debit), credit)) %>% 
+  mutate(debit = as.numeric(debit),
+         debit2 = if_else(indicator != "4" & is.na(debit),-as.numeric(credit), debit)) %>%
+  mutate(debit_credit = round(if_else(indicator == "4",credit2,
+                                if_else(indicator != "4",debit2,credit2)), 2)) %>%
+  select(-debit2, -credit2) %>% 
+  relocate(debit_credit, .before = debit) %>% 
+  mutate(debit = round(debit, 2),
+         credit = round(credit, 2)) %>%
+  mutate(account_title = substring(account, 8)) %>% 
+  relocate(account_title, .before = account) %>% 
+  mutate(date = as.numeric(date), 
+         date = as.Date(date, origin = "1899-12-30")) %>% 
+  mutate(category = if_else(account_number %in% building_repairs_maintenance_accounts,"Building R&M",
+                            if_else(account_number %in% compensation_accounts, "Compensation Accounts",
+                                    ifelse(account_number %in% management_fee_accounts, "Management Fees",
+                                           if_else(account_number %in% instructional_accounts, "Instructional Accounts",
+                                                   if_else(account_number %in% utility_accounts, "Utility Accounts",
+                                                           if_else(indicator == "4","Revenue Accounts",""))))))) %>% 
+  relocate(category, .before = account_number)
+
+# Customize Data to only show relevant columns
+custom_df <- df %>% 
+  select(-1,-3,-4, -11, -12, -17:-20) %>% 
+  select(-contains("date_created")) %>% 
+  rename(vendor = name)
+```
+Create data set of all operating compensation_accounts for analysis. 
+```{r }
+compensation_table_df <- custom_df %>% 
+  filter(category == "Compensation Accounts") %>%
+  filter(!(grepl("Indirect Cost", description, ignore.case = TRUE))) %>% # remove indirect cost lines from data
+  mutate(grant = if_else(is.na(grant), "operating", grant))
+
+
+compensation_table_analysis <- compensation_table_df %>%
+  group_by(account, grant, department_name) %>% 
+  summarise(amount = sum(debit_credit)) %>% 
+  mutate(id = if_else(account %in% wage_accounts, "pay", ""))
+
+```
+Filter wages and taxes accounts for analysis. 
+```{r }
+summarize_compensation_accounts <- function(data, wage_accounts, tax_accounts, benefit_accounts) {
+      data %>%
+        filter(account %in% c(wage_accounts, tax_accounts, benefit_accounts)) %>%
+        group_by(department_name, account, grant) %>%
+        summarise(amount = sum(amount))
+    }
+    
+compensation_summary <- summarize_compensation_accounts(compensation_table_analysis, wage_accounts, tax_accounts, benefit_accounts)
+
+compensation_result <- compensation_summary %>%
+  pivot_wider(names_from = account, values_from = amount, values_fill = 0) %>% 
+  datatable(class = 'cell-border stripe', colnames = c('ID' = 1, 'Department' = 2, 'Fund Source' = 3)) %>% 
+  formatStyle()
+
+compensation_result
+```
+
+```{r benefits}
+
+```
+
+```{r }
+result <- filtered_summary_df %>%
+  mutate(
+    fica_pct = round((fica / all_pay) * 100, 3),
+    futa_pct = round((futa / all_pay) * 100, 3),
+    suta_pct = round((suta / all_pay) * 100, 3),
+    accrual_taxes_pct = round((accrual_taxes / all_pay) * 100, 3),
+    sick_day_pct = round((sick_day / all_pay) * 100, 3),
+    retirement_pct = round((retirement / all_pay) * 100, 3),
+    general_benefits_pct = round((general_benefits / all_pay) * 100, 3),
+    insurance_pct = round((insurance / all_pay) * 100, 3),
+    workers_comp_pct = round((workers_comp / all_pay) * 100, 3)
+  )
+
+
+```
+
+
