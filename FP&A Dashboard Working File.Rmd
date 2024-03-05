@@ -44,7 +44,7 @@ benefit_accounts <- c("60140 - Sick Day Buy Out","60420 - General Benefits", "60
 ```
 
 ```{r pressure, echo=FALSE}
-data <- openxlsx::read.xlsx("iber_dec_gl.xlsx")
+data <- openxlsx::read.xlsx("testing_data_iber_ledger.xlsx")
 
 csv <- data %>% 
   slice(-(1:3))
@@ -94,6 +94,25 @@ custom_df <- df %>%
   select(-1,-3,-4, -11, -12, -17:-20) %>% 
   select(-contains("date_created")) %>% 
   rename(vendor = name)
+
+custom_df %>% datatable(
+      class = 'cell-border stripe',
+      colnames = c(
+        "",
+        "Category",
+        "Account",
+        "Type",
+        "Date",
+        "Document Number",
+        "Vendor",
+        "Debit/Credit",
+        "Description",
+        "Grant",
+        "Department Name",
+        "Fund Name"
+      )
+    ) %>% 
+      formatCurrency(columns = "debit_credit")
 ```
 Create data set of all operating compensation_accounts for analysis. 
 ```{r }
@@ -105,8 +124,7 @@ compensation_table_df <- custom_df %>%
 
 compensation_table_analysis <- compensation_table_df %>%
   group_by(account, grant, department_name) %>% 
-  summarise(amount = sum(debit_credit)) %>% 
-  mutate(id = if_else(account %in% wage_accounts, "pay", ""))
+  summarise(amount = sum(debit_credit))
 
 ```
 Filter wages and taxes accounts for analysis. 
@@ -114,39 +132,87 @@ Filter wages and taxes accounts for analysis.
 summarize_compensation_accounts <- function(data, wage_accounts, tax_accounts, benefit_accounts) {
       data %>%
         filter(account %in% c(wage_accounts, tax_accounts, benefit_accounts)) %>%
-        group_by(department_name, account, grant) %>%
-        summarise(amount = sum(amount))
-    }
-    
+        group_by(department_name, account) %>%
+        summarise(amount = round(sum(amount)))
+}
+
 compensation_summary <- summarize_compensation_accounts(compensation_table_analysis, wage_accounts, tax_accounts, benefit_accounts)
 
 compensation_result <- compensation_summary %>%
-  pivot_wider(names_from = account, values_from = amount, values_fill = 0) %>% 
-  datatable(class = 'cell-border stripe', colnames = c('ID' = 1, 'Department' = 2, 'Fund Source' = 3)) %>% 
-  formatStyle()
+  mutate(id = if_else(account %in% wage_accounts, 1, 0)) %>% 
+  group_by(department_name) %>% 
+  mutate(total_pay = sum(if_else(id == 1, amount, 0))) %>% 
+  mutate(fica_rate = if_else(account == "60640 - FICA", round((amount/total_pay), 3), 0)) %>% 
+  mutate(futa_rate = if_else(account == "60660 - FUTA", round((amount/total_pay), 3), 0)) %>%
+  mutate(suta_rate = if_else(account == "60680 - SUTA", round((amount/total_pay), 3), 0)) %>%
+  mutate('401k_rate' = if_else(account == "60440 - 401(k) Match", round((amount/total_pay), 3), 0)) %>%
+  mutate(insurance_rate = if_else(account =="60480 - Employee insurance", round((amount/total_pay), 3), 0)) %>%
+  mutate(worker_comp_rate = if_else(account == "60520 - Workers Compensation", round((amount/total_pay), 3), 0)) %>% 
+  ungroup() %>% 
+  select(-id) %>% 
+  pivot_wider(names_from = account, values_from = amount, values_fill = 0)
 
-compensation_result
+
+compensation_table <- compensation_result %>% 
+  datatable(
+          class = 'cell-border stripe', 
+          colnames = c('ID' = 1, 'Department' = 2)
+    ) %>% 
+  formatRound(2:ncol(compensation_result), 0) %>% 
+        formatStyle(
+          columns = 2:ncol(compensation_result),
+          Color = styleInterval(
+            cuts = -.01,
+            values = c("white", "")
+          ),
+          backgroundColor = styleInterval(
+            cuts = -.01,
+            values = c("red", "")
+          )
+        )
+    
+compensation_table
 ```
 
-```{r benefits}
+```{r payroll}
+raw_payroll_data <- read_excel("02.16.2024 HRIS_Employee Breakdown - Feb.xlsx") %>% suppressWarnings()
+
+payroll_condensed <- raw_payroll_data %>% 
+  clean_names() %>% 
+  select(location_name, job_title, legal_name, grant_indicator_description, annual_rate, cost_code, cost_code_description) %>% 
+  filter(!(cost_code %in% c("104N00", "105N00", "106N00")))
+
+school_list <- unique(payroll_condensed$location_name)
+
+testing_school <- school_list %>% 
+  sample(1)
+
+filtered_payroll <- payroll_condensed %>% 
+  filter(location_name == testing_school)
+
+filtered_payroll_report <- filtered_payroll %>% 
+  group_by(cost_code) %>% 
+  summarise(headcount = n_distinct(legal_name), annual_rate = sum(annual_rate))
+
+filtered_payroll %>% 
+      datatable(
+        class = "cell-border stripe",
+        options = list(paging = FALSE),
+        colnames = c(
+          "School",
+          "Job Title",
+          "Name",
+          "Funding Source",
+          "Annual Rate",
+          "Cost Code",
+          "Description"
+        )
+      ) %>%   
+      formatCurrency(columns = "annual_rate")
 
 ```
 
 ```{r }
-result <- filtered_summary_df %>%
-  mutate(
-    fica_pct = round((fica / all_pay) * 100, 3),
-    futa_pct = round((futa / all_pay) * 100, 3),
-    suta_pct = round((suta / all_pay) * 100, 3),
-    accrual_taxes_pct = round((accrual_taxes / all_pay) * 100, 3),
-    sick_day_pct = round((sick_day / all_pay) * 100, 3),
-    retirement_pct = round((retirement / all_pay) * 100, 3),
-    general_benefits_pct = round((general_benefits / all_pay) * 100, 3),
-    insurance_pct = round((insurance / all_pay) * 100, 3),
-    workers_comp_pct = round((workers_comp / all_pay) * 100, 3)
-  )
-
 
 ```
-
 
