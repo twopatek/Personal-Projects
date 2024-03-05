@@ -1,5 +1,7 @@
 # Load necessary libraries
-pacman::p_load(shiny, bslib, htmltools, tidyverse, lubridate, purrr, janitor, openxlsx, shinythemes, writexl, plotly, DT)
+pacman::p_load(shiny, tidyverse, lubridate, purrr, janitor, openxlsx, shinythemes, writexl, plotly, DT, readxl)
+
+# setwd("C:/Users/MatthewAdams/Eduserve Solutions/FPATeam - Documents/Matthew Adams/CSUSA Projects/General Ledger Demo/FPA Dashboard Files")
 
 # Create Vector String to remove rows with "Total"
 rows_to_remove <- c("Total")
@@ -31,15 +33,28 @@ benefit_accounts <- c("60140 - Sick Day Buy Out","60420 - General Benefits", "60
 
 theme = shinytheme("cerulean")
 
+# Load payroll date
+raw_payroll_data <- read_excel("02.16.2024 HRIS_Employee Breakdown - Feb.xlsx") %>% suppressWarnings()
+
+# Process payroll
+payroll_condensed <- raw_payroll_data %>% 
+  clean_names() %>% 
+  select(location_name, job_title, legal_name, grant_indicator_description, annual_rate, cost_code, cost_code_description) %>% 
+  filter(!(cost_code %in% c("104N00", "105N00", "106N00")))
+
+# Create list of all schools
+school_list <- unique(payroll_condensed$location_name)
+
 # Define UI for application
 ui <- fillPage(
   padding = 80,
   theme = theme,
-  titlePanel("Dashboard Beta"),
+  titlePanel("FP&A Dashboard"),
   tabsetPanel(
-    tabPanel("Upload/Download",
+    tabPanel("General Ledger Automation",
              sidebarLayout(
                sidebarPanel(
+                 width = 3,
                  fileInput("upload", "Upload General Ledger File"),
                  downloadButton("download_ledger", "Download Data"),
                  br(),
@@ -50,45 +65,71 @@ ui <- fillPage(
                  fluidRow(
                    column(
                      width = 12,
-                     style = "max-height: 500px; overflow-y: auto;",
-                     tableOutput("ledger_table")
+                     style = "max-height: 700px; max-width: 2000px; overflow-x: auto;",
+                     DTOutput("ledger_table")
                    ),
                    verbatimTextOutput("error_message")
                  )
                )
              )
-    ), 
-    tabPanel("Taxes & Benefits",
+    ),
+    tabPanel("Payroll Automation",
+             sidebarLayout(
+               sidebarPanel(
+                 width = 3,
+                 selectInput("payroll_school", "Select School:", choices = school_list, selected = first(school_list)),
+                 downloadButton("download_filtered_payroll", "Download Filtered Payroll"),
+                 p("This tab automates the payroll process by filtering the data by school, condensing it, and then creating a pivot."),
+                 p("This dashboard is using the latest payroll file, dated - 02.16.2024")
+               ),
+               mainPanel(
+                 fluidRow(
+                   column(
+                     width = 12,
+                     style = "max-height: 700px; max-width: 2000px; overflow-x: auto;",
+                     DTOutput("filtered_payroll_table")
+                   )
+                 )
+               )
+             )
+             
+    ),
+    tabPanel("Compensation Summary",
              sidebarLayout(
                sidebarPanel(
                  width = 2,
-                 downloadButton("download_compensation", "Download Data")
+                 downloadButton("download_compensation", "Download Data"),
+                 br(),
+                 p("The table on the right displays YTD compensation by department and account.")
                ),
                mainPanel(
-                 card(
-                   height = 650,
-                   full_screen = TRUE,
-                   card_header("Compensation Analysis"),
-                   card_body(
-                     min_height = 200,
-                     layout_column_wrap(
-                       width = 1/2, 
-                       height = 800,
-                       card(full_screen = TRUE, 
-                            card_header("Compensation Table"), 
-                            DTOutput("compensation_result_table"),
-                            ),
-                       card(full_screen = TRUE, 
-                            card_header("Compensation Plot"), 
-                            plotlyOutput("compensation_result_plot"))
-                     )
+                 fluidRow(
+                   column(
+                     width = 12,
+                     style = "max-height: 700px; max-width: 2000px; overflow-x: auto;",
+                     DTOutput("compensation_result_table")
                    )
                  )
+               )
+             )
+    ),
+    tabPanel("Monthly Compensation",
+             sidebarLayout(
+               sidebarPanel(
+                 width = 2,
+                 br(),
+                 p("The plot on the right displays the values booked in each compensation account for each month. You can add/remove lines from the plot by selecting them in the legend.")
+               ),
+               mainPanel(
+                 plotlyOutput("compensation_result_plot",  height = "750px", width = "1500px")
                )
              )
     )
   )
 )
+    
+
+
 
 # Define server logic required to process the uploaded file
 server <- function(input, output) {
@@ -169,7 +210,7 @@ server <- function(input, output) {
         period_range <- label %>% slice(3)
         
         source <- "Netsuite"
-        source <- data_frame(source)
+        source <- tibble(source)
         
         merge1 <- merge(schoolname, period_range)
         
@@ -195,10 +236,37 @@ server <- function(input, output) {
   })
   
   # Render the table of the uploaded data
-  output$ledger_table <- renderTable({
+  output$ledger_table <- renderDT({
+    
     df <- processFile()$data
-    df 
-  }, height = "1000px")
+    
+    # Get the school name and period range
+    schoolname <- processFile()$label$school
+    period_range <- processFile()$label$`period range`
+    
+    # Combine school name and period range for the caption
+    caption_text <- paste("School: ", schoolname, ", Period Range: ", period_range)
+    df %>% datatable(
+      caption = caption_text,
+      class = 'cell-border stripe',
+      options = list(paging = FALSE),
+      colnames = c(
+        "",
+        "Category",
+        "Account",
+        "Type",
+        "Date",
+        "Document Number",
+        "Vendor",
+        "Debit/Credit",
+        "Description",
+        "Grant",
+        "Department Name",
+        "Fund Name"
+      )
+    ) %>% 
+      formatCurrency(columns = "debit_credit")
+  })
   
   # Add download handler
   output$download_ledger <- downloadHandler(
@@ -208,6 +276,53 @@ server <- function(input, output) {
     content = function(file) {
       result <- processFile()
       writexl::write_xlsx(list(Data = result$data, Info = result$label), path = file)
+    }
+  )
+  
+  # Payroll Automation Server Functions
+  
+  # Declare filtered_payroll and filtered_payroll_report globally
+  filtered_payroll <- NULL
+  filtered_payroll_report <- NULL
+  
+  output$filtered_payroll_table <- renderDT({
+    
+    filtered_payroll <<- payroll_condensed %>% 
+      filter(location_name == input$payroll_school)
+    
+    filtered_payroll_report <<- filtered_payroll %>% 
+      group_by(cost_code) %>% 
+      summarise(headcount = n_distinct(legal_name), annual_rate = sum(annual_rate))
+    
+    # Combine school name and period range for the caption
+    caption_text2 <- paste("School: ", input$payroll_school, ", Payroll File Period: ", "02.16.2024")
+    
+    filtered_payroll %>% 
+      datatable(
+        caption = caption_text2,
+        class = "cell-border stripe",
+        options = list(paging = FALSE),
+        colnames = c(
+          "School",
+          "Job Title",
+          "Name",
+          "Funding Source",
+          "Annual Rate",
+          "Cost Code",
+          "Description"
+        )
+      ) %>% 
+      formatCurrency(columns = "annual_rate")
+    
+  })
+  
+  # Add download handler
+  output$download_filtered_payroll <- downloadHandler(
+    filename = function() {
+      paste("filtered_payroll_", Sys.Date(), ".xlsx", sep = "")
+    },
+    content = function(file) {
+      write_xlsx(list('Payroll Detail' = filtered_payroll, "Payroll Pivot" = filtered_payroll_report), path = file)
     }
   )
   
@@ -234,7 +349,7 @@ server <- function(input, output) {
     summarize_compensation_accounts <- function(data, wage_accounts, tax_accounts, benefit_accounts) {
       data %>%
         filter(account %in% c(wage_accounts, tax_accounts, benefit_accounts)) %>%
-        group_by(department_name, account, grant) %>%
+        group_by(department_name, account) %>%
         summarise(amount = sum(amount))
     }
     
@@ -244,9 +359,26 @@ server <- function(input, output) {
     output$compensation_result_table <- renderDT({
       
       compensation_result <- compensation_summary %>%
-        pivot_wider(names_from = account, values_from = amount, values_fill = 0) %>% 
-        datatable(class = 'cell-border stripe')
+        pivot_wider(names_from = account, values_from = amount, values_fill = 0)
       
+      compensation_table <- compensation_result %>% 
+        datatable(
+          class = 'cell-border stripe', 
+          options = list(paging = FALSE),
+          colnames = c('ID' = 1, 'Department' = 2)
+        ) %>% 
+        formatRound(2:ncol(compensation_result), 0) %>% 
+        formatStyle(
+          columns = 2:ncol(compensation_result),
+          Color = styleInterval(
+            cuts = -.01,
+            values = c("white", "")
+          ),
+          backgroundColor = styleInterval(
+            cuts = -.01,
+            values = c("red", "")
+          )
+        )
     })
     
     # Add download handler for compensation data
@@ -292,11 +424,16 @@ server <- function(input, output) {
               color = ~account_category,
               type = 'scatter',  # Specify the chart type
               mode = 'lines+markers',  # Show both lines and markers
-              text = ~paste("Account: ", account_category, "<br>Month: ", entry_month, "<br>Value: ", scales::dollar(account_sum))) %>%
-        layout(title = "Monthly Compensation Summary",
+              text = ~paste("Account: ", account_category, "<br>Month: ", entry_month, "<br>Value: ", scales::dollar(account_sum)),
+              marker = list(size = 8),
+              line = list(width = 4)) %>%
+        layout(title = list(text = "Booked Compensation Amount By Month", font = list(size = 25)),
                xaxis = list(title = "Month"),
-               yaxis = list(title = "Total Compensation"),
-               hovermode = "closest")
+               yaxis = list(title = "", tickformat = "$,.0f"),
+               hovermode = "closest",
+               showlegend = TRUE,
+               margin = list(t = 60)
+        )
       
     })
     
