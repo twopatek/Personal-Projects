@@ -1,0 +1,221 @@
+---
+title: "LCCP Budget PDF Conversion"
+author: "Matthew Adams"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+pacman::p_load(tidyverse, pdftools, janitor, writexl, stringr)
+
+setwd("C:/Users/MatthewAdams/Eduserve Solutions/FPATeam - Documents/Matthew Adams/CSUSA Projects/Convert PDF to Excel")
+
+# Specify the folder containing the PDF files
+folder_path <- "C:/Users/MatthewAdams/Eduserve Solutions/FPATeam - Documents/Matthew Adams/CSUSA Projects/Convert PDF to Excel"
+
+```
+
+Read in PDF files contain each fund summary and detail. 
+```{r }
+# Identify budget summary pages 
+budget_summary_pdf_pages <- list.files(path = folder_path, pattern = "Relevant Pages", full.names = TRUE)
+
+# Pull text from PDF
+budget_summary_pdf_texts <- pdf_text(budget_summary_pdf_pages)
+
+budegt_summary_all_lines <- unlist(strsplit(budget_summary_pdf_texts, "\n", fixed = TRUE)) %>%
+  tibble() %>%
+  rename(scraped_text = '.') %>%
+  mutate(scraped_text = str_remove_all(scraped_text, "\\$")) %>% 
+  mutate(page = str_extract(scraped_text, "Page (\\d+) of \\d+"),
+         page_numeric = as.numeric(str_extract(page, "\\d+")))
+
+budegt_summary_filled_pages <- budegt_summary_all_lines %>% 
+  fill(page_numeric, .direction = "up") %>% 
+  select(-page)
+```
+
+Data manipulation for the Summary by Fund page. 
+```{r }
+# Identify desired order of column names
+column_names <- c("general_fund", "special_revenue_fund", "debt_service_fund", "capital_projects_fund", "total_all_funds")
+
+summary_by_fund_and_function <- budegt_summary_filled_pages %>%
+  filter(page_numeric == 11) %>%
+  select(scraped_text) %>%
+  slice(-8:-10) %>% 
+  mutate(scraped_text = str_trim(scraped_text, side = "left")) %>% 
+  separate(scraped_text, into = c("account", "values"), sep = "\\s{2,}", extra = "merge", fill = "right") %>% 
+  separate(values, into = column_names, sep = "\\s{2,}") %>%
+  pivot_longer(cols = 2:6, names_to = "names", values_to = "values") %>%
+  mutate(test = if_else(account == "", 1, 0)) %>% 
+  filter(test != 1) %>% 
+  select(-test) %>% 
+  mutate(values = if_else(values == "-", "0", values)) %>% 
+  mutate(values = if_else(str_detect(values, "\\("), str_replace(values, "\\(", "-"), values)) %>% 
+  mutate(values = if_else(str_detect(values, "\\)"), str_replace(values, "\\)", ""), values)) %>% 
+  mutate(values = if_else(str_detect(values, "[[:alpha:]]"), NA, values)) %>% 
+  mutate(values = as.numeric(gsub(",", "", values))) %>%
+  mutate(values = if_else(is.na(values), -9999, values)) %>% 
+  mutate(account = factor(account, levels = unique(account))) %>%
+  mutate(names = factor(names, levels = column_names)) %>%
+  group_by(account, names) %>% 
+  summarise(amount = sum(values)) %>% 
+  ungroup() %>% 
+  pivot_wider(id_cols = account, names_from = "names", values_from = "amount")
+
+# Write to Excel file
+write_xlsx(summary_by_fund_and_function, "summary_by_fund_and_function.xlsx")
+
+```
+
+```{r }
+column_names2 <- c("actual_2021_22", "budget_2022_23", "budget_2023_24", "percent_of_change")
+
+other_pages_pdf <- budegt_summary_filled_pages %>% 
+  filter(page_numeric != 11) %>%  
+  group_by(page_numeric) %>% 
+  select(page_numeric, everything()) %>%
+  mutate(scraped_text = str_trim(scraped_text, side = "left")) %>% 
+  separate(scraped_text, into = c("account", "values"), sep = "\\s{2,}", extra = "merge", fill = "right") %>% 
+  separate(values, into = column_names2, sep = "\\s{2,}") %>% 
+  ungroup() %>% 
+  pivot_longer(cols = 3:6, names_to = "names", values_to = "values") %>% 
+  mutate(test = if_else(account == "", 1, 0)) %>% 
+  filter(test != 1) %>% 
+  select(-test) %>% 
+  group_by(page_numeric) %>% 
+  mutate(values = if_else(values == "-", "0", values)) %>%
+  mutate(values = if_else(str_detect(values, "\\("), str_replace(values, "\\(", "-"), values)) %>% 
+  mutate(values = if_else(str_detect(values, "\\)"), str_replace(values, "\\)", ""), values)) %>% 
+  mutate(values = if_else(str_detect(values, "%"), as.numeric(str_replace(values, "%", ""))/100, as.numeric(gsub(",", "", values)))) %>% 
+  mutate(values = if_else(is.na(values), -9999, values)) %>%
+  mutate(account = factor(account, levels = unique(account))) %>%
+  mutate(names = factor(names, levels = column_names2)) %>%
+  ungroup() %>% 
+  group_by(page_numeric, account, names) %>% 
+  summarise(amount = sum(values)) %>% 
+  ungroup() %>% 
+  pivot_wider(id_cols = 1:2, names_from = "names", values_from = "amount")
+
+# Write to Excel file
+write_xlsx(other_pages_pdf, "individual_fund_summary.xlsx")
+
+```
+
+Map function to extract PDF text data across all detail PDF's.
+```{r }
+detail_pdf_pages <- list.files(path = folder_path, pattern = "Detail", full.names = TRUE)
+
+# Create an empty list to store the data frames for each PDF
+all_detail_dfs <- list()
+
+# Function to extract text from a PDF file
+extract_text <- function(pdf_file) {
+  pdf_text(pdf_file)
+}
+
+# Function to perform the data manipulation for a single PDF
+process_detail_pdfs <- function(pdf_file) {
+  pdf_texts <- extract_text(pdf_file)
+  
+  pdf_all_lines <- unlist(strsplit(pdf_texts, "\n", fixed = TRUE)) %>%
+    tibble() %>%
+    rename(scraped_text = '.') %>%
+    mutate(scraped_text = str_remove_all(scraped_text, "\\$")) %>% 
+    mutate(page = str_extract(scraped_text, "Page (\\d+) of \\d+"),
+           page_numeric = as.numeric(str_extract(page, "\\d+")))
+  
+  detail_filled_pages <- pdf_all_lines %>% 
+    fill(page_numeric, .direction = "up") %>% 
+    select(-page) %>% 
+    relocate(page_numeric, .before = scraped_text)
+  
+  return(detail_filled_pages)
+  
+}
+
+detail_pdf_df <- map_df(detail_pdf_pages, process_detail_pdfs)
+```
+
+Manipulate  
+```{r }
+processed_data <- detail_pdf_df %>% 
+  group_by(page_numeric) %>% # 
+  mutate(id = row_number()) %>% # create row id column 
+  mutate(header_rows = if_else(id %in% 1:3, 1, 0)) %>% # identify rows with header text
+  mutate(test = if_else(id == max(id), 1, 0)) %>% # identify last row per page
+  filter(test != 1) %>% # filter out last row of each page
+  select(-test) %>% 
+  mutate(test = if_else(scraped_text == "", 1, 0)) %>% # identify blank rows of data
+  filter(test != 1) %>% # remove blank rows
+  select(-test) %>% 
+  ungroup() %>% # 
+  relocate(scraped_text, .after = header_rows) %>%
+  group_by(page_numeric) %>% # regroup data for more operations
+  mutate(id = row_number()) %>% # recreate id column with filtered rows of data
+  mutate(column_titles = if_else(id %in% 4:5, 1, 0)) %>% # idenitfy rows with column titles
+  relocate(column_titles, .before = scraped_text) %>% 
+  mutate(afr_description_row = if_else(str_detect(scraped_text, "AFR Column"), 1,0)) %>% 
+  relocate(afr_description_row, .before = scraped_text) %>% 
+  mutate(scraped_text = str_trim(scraped_text, side = "left")) %>% 
+  mutate(rows_following_afr = if_else(cumsum(lag(afr_description_row, default = 0)) > 0 & !str_detect(scraped_text, "\\s{3,}"), 1, 0)) %>% 
+  relocate(rows_following_afr, .before = scraped_text) %>% 
+  mutate(rows_to_split = if_else(header_rows + column_titles + afr_description_row + rows_following_afr > 0, 0, 1)) %>% 
+  relocate(rows_to_split, .before = scraped_text)
+
+
+```
+
+```{r }
+split_text_rows <- processed_data %>%
+  separate(
+    col = scraped_text,
+    into = c("account_numbers", "other_text"),
+    sep = "\\s*+(?=[A-Za-z])",
+    extra = "merge",
+    fill = "right",
+    remove = FALSE, # Keep scraped_text column after splitting
+    convert = TRUE # Convert factors to character vectors
+  ) %>%
+  mutate(
+    account_numbers = if_else(rows_to_split == 1, account_numbers, scraped_text),
+    other_text = if_else(rows_to_split == 1, other_text, NA_character_) # Placeholder for other_text when not splitting
+  ) %>%
+  separate( 
+    col = account_numbers,
+    into = c("x", "account_numbers"),
+    sep = "\\s{2,}",
+    extra = "merge",
+    fill = "right",
+    remove = TRUE, # Remove the x column
+    convert = TRUE # Convert factors to character vectors
+  ) %>%
+  separate( 
+    col = other_text,
+    into = c("account_name", "actual_2021_22", "budget_2022_23", "budget_2023_24"),
+    sep = "\\s{3,}",
+    extra = "merge",
+    fill = "right",
+    remove = TRUE, # Remove NA columns
+    convert = TRUE # Convert factors to character vectors
+  ) %>%
+  select(1, 9:14)
+
+clean_df <- split_text_rows %>%
+  group_by(page_numeric) %>%
+  mutate(across(c(4:6), ~if_else(. == "-", "0", .))) %>% # Replace "-" with 0
+  mutate(across(c(4:6), ~if_else(str_detect(., "\\("), str_replace(., "\\(", "-"), .))) %>% # Replace "(" with "-"
+  mutate(across(c(4:6), ~if_else(str_detect(., "\\)"), str_replace(., "\\)", ""), .))) %>% # Remove ")"
+  mutate(across(c(4:6), ~if_else(is.na(.), "-9999", .))) %>% # Replace NA with -9999
+  mutate(across(c(4:6), ~as.numeric(gsub(",", "", .)))) %>% # Convert to numeric after removing commas
+  ungroup() %>%
+  suppressWarnings()
+
+write_xlsx(clean_df, "LCCP Budget Fund Detail.xlsx")
+```
+
+
+
