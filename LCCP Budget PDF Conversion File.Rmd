@@ -217,5 +217,33 @@ clean_df <- split_text_rows %>%
 write_xlsx(clean_df, "LCCP Budget Fund Detail.xlsx")
 ```
 
+```{r }
+# Identify budget summary pages 
+roster_pdf_pages <- list.files(path = folder_path, pattern = "Roster", full.names = TRUE)
 
+# Pull text from PDF
+roster_pdf_texts <- pdf_text(roster_pdf_pages)
+
+roster_all_lines <- unlist(strsplit(roster_pdf_texts, "\n", fixed = TRUE)) %>%
+  tibble() %>%
+  rename(scraped_text = '.') %>%
+  mutate(scraped_text = str_remove_all(scraped_text, "\\$")) %>% 
+  mutate(page = str_extract(scraped_text, "Page (\\d+) of \\d+"),
+         page_numeric = as.numeric(str_extract(page, "\\d+")))
+
+roster_columns <- c("level_code", "unknown_code", "fte_22", "salary_22", "fte_23", "salary_23", "fte_24", "salary_24")
+
+roster_filled_pages <- roster_all_lines %>% 
+  fill(page_numeric, .direction = "up") %>% 
+  select(-page) %>% 
+  relocate(scraped_text, .after = page_numeric) %>% 
+  slice(-1:-9, -45:-57, -74, -76:-77, -79:-97) %>% 
+  mutate(scraped_text = str_trim(scraped_text, side = "left")) %>% 
+  separate(scraped_text, into = c("position", "values"), sep = "\\s{2,}", extra = "merge", fill = "right") %>% 
+  separate(values, into = roster_columns, sep = "\\s{2,}", extra = "merge", fill = "right")
+  
+write_xlsx(roster_filled_pages, "LCCP Personnel Roster.xlsx")
+
+
+```
 
