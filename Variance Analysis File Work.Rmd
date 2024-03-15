@@ -14,7 +14,7 @@ setwd("C:/Users/MatthewAdams/Eduserve Solutions/FPATeam - Documents/Matthew Adam
 
 # API Access
 Sys.setenv(
-  OPENAI_API_KEY = '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'
+  OPENAI_API_KEY = 'YOUR API KEY'
 )
 ```
 
