@@ -1,0 +1,258 @@
+---
+title: "Variance Analysis Scraper"
+author: "Matthew Adams"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# Load and install packages
+pacman::p_load(tidyverse, readxl, stringr, janitor, openai, textTinyR, writexl)
+
+# Set working directory to pull file from
+setwd("C:/Users/MatthewAdams/Eduserve Solutions/FPATeam - Documents/Matthew Adams/CSUSA Projects/Scrape VA Files")
+
+# API Access
+Sys.setenv(
+  OPENAI_API_KEY = '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'
+)
+```
+
+
+A sample Variance Analysis file is read from excel, selecting only the variance analysis tab. The school name of the imported file is stored as a variable for future refernecing. 
+```{r data}
+# Load file
+csv <- read_excel("testing_va_file.xlsx", sheet = "Variance Analysis") %>% 
+  clean_names() # clean default column names for easier referencing
+
+# Store school name
+school_name <- names(csv)[1]
+
+# Create list of general ledger accounts 
+general_ledger <- read_excel("testing_iber_jan_GL_file.xlsx")
+
+general_ledger_accounts <- general_ledger %>% 
+  distinct(account)
+
+# Data manipulation steps
+va <- csv %>% 
+  rename_with(~"x1", 1) %>% # rename first column 
+  mutate(x2 = if_else(is.na(x2) & !is.na(x1), x1, x2)) %>% # align account columns that were separated due to indention in excel
+  select(-x1) # remove first column whose values are now shared in column2
+
+# Select relevant columns for analysis, this will likely be file specific based on user formatting
+va <- va %>% 
+  select(1:5,7,9:13)
+
+column_names <- c("account", "ytd_actual", "ytd_budget", "variance_actual", "percent_variance_actual", "ytd_comments",
+                  "annual_forecast", "annual_budget", "variance_fcst", "percent_variance_fcst", "forecast_comments")
+
+colnames(va) <- column_names
+
+head(va, 10)
+```
+
+```{r data processing}
+cleaned_va_file <- va %>% 
+  mutate(test = if_else(is.na(account), 1,0)) %>% 
+  filter(test != 1) %>% 
+  select(-test) %>% 
+  relocate(ytd_comments, .after = account) %>% 
+  relocate(forecast_comments, .after = ytd_comments)
+
+cleaned_va_file <- cleaned_va_file %>% 
+  group_by(account) %>% 
+  pivot_longer(cols = 4:11, names_to = "names", values_to = "values") %>% 
+  mutate(values = round(as.numeric(values), 2)) %>% 
+  pivot_wider(id_cols = 1:3, names_from = "names", values_from = "values") %>% 
+  ungroup()
+  
+filtered_va_file <- cleaned_va_file %>% 
+  mutate(column_sum = ytd_actual + ytd_budget + annual_forecast + annual_budget) %>% 
+  filter(column_sum > 0) %>% 
+  select(-column_sum) %>% 
+  mutate(ytd_comments = if_else(is.na(ytd_comments), "No Comment", ytd_comments),
+         forecast_comments = if_else(is.na(forecast_comments), "No Comment", forecast_comments)
+  ) %>% 
+  slice(-1:-6) %>% 
+  mutate(checker = if_else(abs(percent_variance_actual) >= .15, "check", "pass")) %>% 
+  mutate(budget_status = if_else(checker == "check" & ytd_actual > ytd_budget, "Over Budget",
+                             if_else(checker == "check" & ytd_actual < ytd_budget, "Under Budget", "")
+  )) %>% 
+  relocate(checker, .after = account) %>% 
+  relocate(budget_status, .after = checker)
+
+head(filtered_va_file, 10)
+```
+
+FP&A Buddy
+```{r data analysis}
+# Create function to get text embeddings for each budget status type
+get_budget_status_embedding <- function(status) {
+    embedding <- create_embedding(
+    model = "text-embedding-3-large",
+    input = status
+  )
+  return(embedding$data$embedding[[1]])
+}
+  
+status <- c("Over Budget", "Under Budget")  
+  
+status_embedding_result <- map(status, get_budget_status_embedding)
+
+
+# Create function to get text embeddings for each comment
+get_comment_embedding <- function(comment) {
+    embedding <- create_embedding(
+    model = "text-embedding-3-large",
+    input = comment
+  )
+  return(embedding$data$embedding[[1]])
+}
+
+comment_embedding_result <- filtered_va_file %>% 
+  select(ytd_comments) %>% 
+  distinct() %>% 
+  mutate(embedding = map(ytd_comments, get_comment_embedding))
+```
+
+This section attempts to assign each YTD comment as either under or over budget using a cosine similarity method between the comment and the term "under/over budget".
+```{r }
+compute_similarity <- function(status_embedding, comment_embedding) {
+  
+  dot_product <- sum(status_embedding * comment_embedding)
+  magnitude_vec1 <- sqrt(sum(status_embedding^2))
+  magnitude_vec2 <- sqrt(sum(comment_embedding^2))
+  
+  similarity <- round((dot_product / (magnitude_vec1 * magnitude_vec2)), 4)
+  return(similarity)
+}
+
+comment_embedding_result <- comment_embedding_result %>% 
+  rowwise() %>% 
+  mutate(over_budget_cosine = compute_similarity(embedding, status_embedding_result[[1]]),
+         under_budget_cosine = compute_similarity(embedding, status_embedding_result[[2]])
+  )
+
+comment_embedding_result <- comment_embedding_result %>% 
+  select(-embedding) %>% 
+  group_by(ytd_comments) %>% 
+  pivot_longer(cols = c("over_budget_cosine", "under_budget_cosine"), names_to = "names", values_to = "values") %>% 
+  arrange(-values) %>% 
+  mutate(group_index = which.max(values)) %>% 
+  mutate(label = names[group_index]) %>% 
+  select(-group_index) %>% 
+  pivot_wider(id_cols = c("ytd_comments", "label"), names_from = "names", values_from = "values") %>% 
+  ungroup()
+
+ytd_comments <- unique(comment_embedding_result$ytd_comments) 
+
+filtered_va_file_comments <- filtered_va_file %>% 
+  filter(ytd_comments %in% ytd_comments) %>% 
+  filter(ytd_comments != "No Comment")
+```
+
+The section is designed to identify accounts of interest from the VA P&L, then compile the General Ledger entries for the respective accounts. Further testing to be done regarding text processing of GL descriptions. Specific accounts such as Blended Online and Wages will need trained data. 
+```{r  }
+# Create list of P&L accounts to search in general ledger
+va_reference_accounts <- filtered_va_file %>%
+  select(account) %>% 
+  mutate(test = if_else(str_detect(account, regex("Total|Operating Surplus", ignore_case = TRUE)), 1, 0)) %>% 
+  filter(test != 1) %>% 
+  select(-test)
+  
+# Create function to get text embeddings for each P&L account
+get_account_embedding <- function(account) {
+    embedding <- create_embedding(
+    model = "text-embedding-3-large",
+    input = account
+  )
+  return(embedding$data$embedding[[1]])
+}
+
+va_reference_accounts <- va_reference_accounts %>% 
+  mutate(embedding = map(account, get_account_embedding))
+
+# Create function to get text embeddings for each General Ledger account
+general_ledger_accounts <- general_ledger_accounts %>% 
+  mutate(embedding = map(account, get_account_embedding))
+
+# Create a function to calculate cosine similarity
+cosine_similarity <- function(embedding1, embedding2) {
+  similarity <- sum(embedding1 * embedding2) / (sqrt(sum(embedding1^2)) * sqrt(sum(embedding2^2)))
+  return(similarity)
+}
+
+# Initialize a matrix to store similarity scores
+similarity_matrix <- matrix(nrow = nrow(va_reference_accounts), ncol = nrow(general_ledger_accounts))
+
+# Iterate over each account in va_reference_accounts
+for (i in seq_len(nrow(va_reference_accounts))) {
+  # Iterate over each account in general_ledger_accounts
+  for (j in seq_len(nrow(general_ledger_accounts))) {
+    # Calculate cosine similarity between embeddings
+    similarity <- cosine_similarity(va_reference_accounts$embedding[[i]], general_ledger_accounts$embedding[[j]])
+    
+    # Store similarity score in the similarity matrix
+    similarity_matrix[i, j] <- similarity
+  }
+}
+
+# Add the similarity matrix as columns to va_reference_accounts
+colnames(similarity_matrix) <- general_ledger_accounts$account  # Name columns with accounts from general_ledger_accounts
+va_reference_accounts <- cbind(va_reference_accounts, similarity_matrix)
+
+results <- va_reference_accounts %>% 
+  select(-embedding) %>% 
+  group_by(account) %>% 
+  pivot_longer(cols = 2:105, names_to = "names", values_to = "values") %>% 
+  arrange(-values) %>% 
+  mutate(max_value_index = which.max(values)) %>% 
+  mutate(primary_label = names[max_value_index]) %>% 
+  select(-max_value_index) %>% 
+  pivot_wider(id_cols = c("account", "primary_label"), names_from = "names", values_from = "values") %>% 
+  select(1:2)
+
+results <- results %>%
+  arrange(match(account, va_reference_accounts$account))
+
+write_xlsx(results, "iber_jan_results.xlsx")
+```
+
+Using the results from the previous chunk, identify accounts not properly referenced to prepare training data. 
+
+Capital Expenditures (Noncap) 
+All Revenue                          -
+Student Consumables                  -must include workbooks and supplies
+Cleaning Supplies                    - office supplies dep: maintenance of plant/ operation of plant
+BOSS Expense                         -61160 fund: virtual
+Travel Expenses                      -all GL accounts on one line-item in P&L    
+Internet                             -all GL accounts on one line-item in P&L
+All compensation                     -wages exempt/non-exempt by dep
+
+
+SCCR General Overhead
+Medical Supplies
+Contracted Custodial
+Building R&M
+Staff Recruitment
+Prof fees grants
+electricity & natural gas
+
+```{r training} 
+# Load testing results
+d <- read.csv("iber_jan_results.csv") %>% 
+  select(1:2)
+
+
+```
+
+This section will use the previous chunks ledger account labels to then filter 
+```{r }
+general_ledger_filtered <- general_ledger %>% 
+  filter(account %in% d$GL_AccountLabel)
+  
+
+
+
+```
